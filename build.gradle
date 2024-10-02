@@ -40,6 +40,7 @@ repositories {
         content { includeGroup("com.jamieswhiteshirt") }
     }
     maven { url = "https://maven.ladysnake.org/releases" } // CCA, for Trinkets
+    flatDir { dirs "libs" }
 }
 
 dependencies {
@@ -102,7 +103,8 @@ def compat(DependencyHandler deps) {
     deps.modCompileOnly("vazkii.botania:Botania:$botania_version") { transitive = false }
     deps.modCompileOnly("com.terraformersmc:modmenu:$modmenu_version")
     deps.modCompileOnly("maven.modrinth:sandwichable:$sandwichable_version")
-    deps.modCompileOnly("maven.modrinth:sodium:$sodium_version")
+    //deps.modCompileOnly("maven.modrinth:sodium:$sodium_version")
+    deps.modCompileOnly(":sodium-fabric-1.20.1-0.6.0-beta.3+mc1.20.1-slim")
 
     deps.modCompileOnly("dev.emi:trinkets:$trinkets_version")
     // for Trinkets

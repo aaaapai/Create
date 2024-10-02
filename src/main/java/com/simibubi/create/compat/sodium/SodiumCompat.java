@@ -3,20 +3,24 @@ package com.simibubi.create.compat.sodium;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
-import java.util.function.Supplier;
+import java.util.function.Predicate;
 
 import com.simibubi.create.Create;
 import com.simibubi.create.compat.Mods;
 import com.simibubi.create.foundation.utility.Components;
 
-import me.jellysquid.mods.sodium.client.render.texture.SpriteUtil;
+import net.caffeinemc.mods.sodium.api.texture.SpriteUtil;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.fabricmc.fabric.api.networking.v1.PacketSender;
+import net.fabricmc.loader.api.FabricLoader;
+import net.fabricmc.loader.api.ModContainer;
+import net.fabricmc.loader.api.Version;
+import net.fabricmc.loader.api.VersionParsingException;
+import net.fabricmc.loader.api.metadata.version.VersionPredicate;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -42,18 +46,29 @@ public class SodiumCompat {
 		}
 
 		boolean compatInitialized = false;
-		for (SpriteUtilCompat value : SpriteUtilCompat.values()) {
-			if (value.doesWork.get()) {
-				Minecraft mc = Minecraft.getInstance();
-				WorldRenderEvents.START.register(ctx -> {
-					Function<ResourceLocation, TextureAtlasSprite> atlas = mc.getTextureAtlas(InventoryMenu.BLOCK_ATLAS);
-					TextureAtlasSprite sawSprite = atlas.apply(SAW_TEXTURE);
-					value.markSpriteAsActive.accept(sawSprite);
-				});
-				compatInitialized = true;
-				break;
+
+		Optional<ModContainer> containerOptional = FabricLoader.getInstance()
+				.getModContainer(Mods.SODIUM.id());
+
+		if (containerOptional.isPresent()) {
+			Version sodiumVersion = containerOptional.get()
+					.getMetadata()
+					.getVersion();
+
+			for (SpriteUtilCompat value : SpriteUtilCompat.values()) {
+				if (value.doesWork.test(sodiumVersion)) {
+					Minecraft mc = Minecraft.getInstance();
+					WorldRenderEvents.START.register(ctx -> {
+						Function<ResourceLocation, TextureAtlasSprite> atlas = mc.getTextureAtlas(InventoryMenu.BLOCK_ATLAS);
+						TextureAtlasSprite sawSprite = atlas.apply(SAW_TEXTURE);
+						value.markSpriteAsActive.accept(sawSprite);
+					});
+					compatInitialized = true;
+					break;
+				}
 			}
 		}
+
 		if (!compatInitialized) {
 			Create.LOGGER.error("Create's Sodium compat errored and has been partially disabled. Report this!");
 		}
@@ -80,65 +95,51 @@ public class SodiumCompat {
 	}
 
 	private enum SpriteUtilCompat {
-		V0_5(() -> {
+		V0_5((version) -> {
 			try {
-				return checkMarkSpriteActiveSignature(SpriteUtil.class);
-			} catch (Throwable t) {
+				invokeOld(null);
+				return true;
+			} catch (Throwable ignored) {
 				return false;
 			}
 		}, (sawSprite) -> {
 			try {
-				SpriteUtil.markSpriteActive(sawSprite);
+				invokeOld(sawSprite);
 			} catch (Throwable ignored) {}
 		}),
-		V0_6(() -> {
+		V0_6_API((version) -> {
 			try {
-				return checkMarkSpriteActiveSignature(Class.forName("net.caffeinemc.mods.sodium.client.render.texture.SpriteUtil"));
-			} catch (Throwable t) {
+				return VersionPredicate.parse(">=0.6.0-beta.3").test(version);
+			} catch (VersionParsingException e) {
 				return false;
 			}
 		}, (sawSprite) -> {
 			try {
-				invokeMarkSpriteActive(Class.forName("net.caffeinemc.mods.sodium.client.render.texture.SpriteUtil"), sawSprite);
-			} catch (Throwable ignored) {}
-		}),
-		V0_6_API(() -> {
-			try {
-				Field field = Class.forName("net.caffeinemc.mods.sodium.api.texture.SpriteUtil")
-						.getDeclaredField("INSTANCE");
-				return checkMarkSpriteActiveSignature((Class<?>) field.get(null));
-			} catch (Throwable t) {
-				return false;
-			}
-		}, (sawSprite) -> {
-			try {
-				Field field = Class.forName("net.caffeinemc.mods.sodium.api.texture.SpriteUtil")
-						.getDeclaredField("INSTANCE");
-
-				invokeMarkSpriteActive((Class<?>) field.get(null), sawSprite);
+				SpriteUtil.INSTANCE.markSpriteActive(sawSprite);
 			} catch (Throwable ignored) {}
 		});
 
-		private final Supplier<Boolean> doesWork;
+		private static MethodHandle markSpriteActiveHandle;
+
+		private final Predicate<Version> doesWork;
 		private final Consumer<TextureAtlasSprite> markSpriteAsActive;
 
-		SpriteUtilCompat(Supplier<Boolean> doesWork, Consumer<TextureAtlasSprite> markSpriteAsActive) {
+		SpriteUtilCompat(Predicate<Version> doesWork, Consumer<TextureAtlasSprite> markSpriteAsActive) {
 			this.doesWork = doesWork;
 			this.markSpriteAsActive = markSpriteAsActive;
 		}
 
-		private static boolean checkMarkSpriteActiveSignature(Class<?> clazz) throws Throwable {
-			Method method = clazz.getMethod("markSpriteActive", TextureAtlasSprite.class);
-			if (method.getReturnType() != Void.TYPE)
-				throw new IllegalStateException("markSpriteActive's signature has changed");
-			return true;
+		static {
+			try {
+				Class<?> spriteUtil = Class.forName("nme.jellysquid.mods.sodium.client.render.texture.SpriteUtil");
+
+				MethodType methodType = MethodType.methodType(void.class, TextureAtlasSprite.class);
+				markSpriteActiveHandle = lookup.findStatic(spriteUtil, "markSpriteActive", methodType);
+			} catch (Throwable ignored) {}
 		}
 
-		private static void invokeMarkSpriteActive(Class<?> clazz, TextureAtlasSprite sawSprite) throws Throwable {
-			MethodType methodType = MethodType.methodType(Void.TYPE);
-			MethodHandle handle = lookup.findVirtual(clazz, "markSpriteActive", methodType);
-
-			handle.invoke(sawSprite);
+		public static void invokeOld(TextureAtlasSprite sawSprite) throws Throwable {
+			markSpriteActiveHandle.invoke(sawSprite);
 		}
 	}
 }
