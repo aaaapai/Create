@@ -9,8 +9,8 @@ plugins {
     id "maven-publish" // maven publishing
 }
 
-sourceCompatibility = JavaVersion.VERSION_17
-targetCompatibility = JavaVersion.VERSION_17
+sourceCompatibility = JavaVersion.VERSION_21
+targetCompatibility = JavaVersion.VERSION_21
 
 String runNumber = System.getenv("GITHUB_RUN_NUMBER")
 String build = runNumber != null ? "build.$runNumber" : "local"
@@ -219,7 +219,7 @@ processResources {
 }
 
 tasks.withType(JavaCompile).configureEach {
-    it.options.release.set(17)
+    it.options.release.set(21)
 }
 
 java {
